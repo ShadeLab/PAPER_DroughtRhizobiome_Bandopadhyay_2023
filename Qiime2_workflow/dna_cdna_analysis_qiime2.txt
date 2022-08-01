@@ -1,0 +1,553 @@
+####
+16S analysis in Qiime2: workflow in HPCC
+####
+
+
+#steps to download data from RTSF shown here https://rtsf.natsci.msu.edu/genomics/data-retrieval/
+##this will copy files from shade lab RTSF location to my home directory in HPCC
+
+#move files from bandopad directory to the ShadeLab working space
+mv /mnt/home/bandopad/20210908_16SV4_PE250 /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome
+
+#copy all .gz files to a new folder called DNA_analysis or cDNA_analysis 
+cp /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/20210823_16SV4_PE250/*.gz /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/cDNA_analysis_plate456
+
+#steps to download qiime2
+conda update conda
+wget https://data.qiime2.org/distro/core/qiime2-2021.4-py38-linux-conda.yml
+conda env create -n qiime2-2021.4 --file qiime2-2021.4-py38-linux-conda.yml ##creates an environment called qiime2-2021.4
+conda info --envs ##check conda envs
+conda activate qiime2-2021.4 ##activate conda env
+
+
+#count the correct file numbers in the specific cDNA analysis or DNA analysis folder using
+ls | wc -l
+
+#for subsequent steps navigate to folder called DNA_analysis or cDNA_analysis
+
+#change .gz files to .fastq files 
+gunzip *.gz
+
+#make manifest file, since mothur can do this step easily using the make.file command we will use mothur for this step
+#alternative in qiime2?
+
+#do the following within the DNA_analysis or cDNA_analysis folder. Make sure that modules are loaded or reload the modules #as needed
+
+
+#to download mothur follow these steps in HPCC
+module spider mothur
+module spider Mothur/1.44.3-Python-3.7.2
+module purge
+module load GCC/8.2.0-2.31.1  OpenMPI/3.1.3
+module load Mothur/1.44.3-Python-3.7.2
+mothur ##will open mothur on HPCC, use quit() to go back to bash
+
+make.file(inputdir=., type=fastq, prefix=stability)
+
+#output: 
+#Setting input directory to: /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/#DNA_analysis/
+
+#Output File Names: 
+#/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/DNA_analysis/stability.files
+#stability.files can be opened in excel and the header changed to match what is needed for manifest file to be used 
+#with qiime2. 
+
+#quit mothur, this brings us back to bash 
+
+quit() 
+
+
+##open stability.files in excel and change header to sample-id, forward-absolute-filepath and reverse-absolute-filepath
+##change path to absolute path
+## save as .txt file called manifest_file.txt
+
+##quality control with fastQC. this code will store all Fastqc reports in zip file and also export as the usual html ##file. Individually exported for each forward and reverse file.
+
+module spider Fastqc
+module load FastQC/0.11.7-Java-1.8.0_162
+fastqc *.fastq
+
+conda activate qiime2-2021.4
+
+qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path manifest_file.txt --output-path paired-end-demux.qza --input-format PairedEndFastqManifestPhred33V2
+
+##output says : Imported manifest_file.txt as PairedEndFastqManifestPhred33V2 to paired-end-demux.qza
+
+##All of the sequence data is stored compressed in the file paired-end-demux.qza. If we wish, we may create a ##visualization file from it with the following command:
+
+qiime demux summarize --i-data paired-end-demux.qza --o-visualization demux.qzv
+##Saved Visualization to: demux.qzv
+	
+
+##next step is to denoise using DADA2 or deblur plugin. There are two options to optimize merging of the forward and ##reverse reads. This is done by removing as much of the lower quality portions of the reads as possible and still leave ##enough overlap. We can do this by 1. inspection of the quality plots which is subjective, or 2. use Zymo Research’s ##program FIGARO to find the parameters for me. See John Quensen's tutorial on FIGARO for how to install and run Figaro ##here http://john-quensen.com/tutorials/figaro/. 
+
+
+##Figaro 
+
+Create figaro environment
+
+wget http://john-quensen.com/wp-content/uploads/2020/03/figaro.yml
+conda env create -n figaro -f figaro.yml
+
+
+Next, download and install FIGARO by running the following commands from the current directory:
+wget https://github.com/Zymo-Research/figaro/archive/master.zip
+unzip master.zip
+rm master.zip
+mv figaro-master figaro
+cd figaro/figaro
+
+
+# Test FIGARO installation
+# Activate the FIGARO environment
+conda activate figaro
+
+ 
+# Rename the files in Zymo format, for example
+mv forward.fastq sam1_16s_R1.fastq
+mv reverse.fastq sam1_16s_R2.fastq
+
+#when renaming multiple fastq files make use of the stability files to rename in excel first: move all fastq files to a #new folder, then make a batch file to rename all fastq files to Zymo convention. First within the manifest file/#stability file rename 'DNA_' with sam, then rename _S**_L***_ with _16s_ in excel. Then create .sb file as per rules of #batch file to rename all fastq files at once. See example batch script.
+#and then use dos2unix <submission_script> to change to unix if needed. submit the batch file, rename will be 
+#successful for all fastq files in specified folder. Then run Figaro using samples in folder.
+
+
+# Run FIGARO
+# cd to installation folder
+cd /figaro/figaro
+
+##for plate 1 data
+python figaro.py -i /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/DNA_analysis/fastq_plate1/ -o /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/DNA_analysis/fastq_plate1/ -f 1 -r 1 -a 253 -F zymo
+
+
+##we can add minimum overlap as -m 30
+
+python figaro.py -i /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/DNA_analysis/fastq_plate1/ -o /mnt/research/ShadeLab/WorkingSpace/Bandopadhyay_WorkingSpace/drought_rhizobiome/DNA_analysis/fastq_plate1/ -f 1 -r 1 -a 253 -m 30 -F zymo
+
+##truncation parameters will be displayed 
+
+conda deactivate ##deactivates figaro
+
+
+#example output
+
+[
+    {
+        "trimPosition": [
+            123,
+            162
+        ],
+        "maxExpectedError": [
+            1,
+            2
+        ],
+        "readRetentionPercent": 93.26,
+        "score": 92.25925161408699
+    },
+    {
+
+Overlap: 35 bp when min overlap set to 30
+
+##The recommended forward truncation position is 123 and the recommended reverse truncation position is 162. After ##truncation, the expected number of errors in the forward read is 1 and the expected number of errors in the reverse ##read is 2. Using these truncation parameters with the QIIME2 DADA2 plug-in should result in merging 93.26% of the ##reads.
+
+
+##use dada2 Denise paired to Denoise, dereplicate PE sequences, filter chimeras and merge reads to ASVs (default)
+
+qiime dada2 denoise-paired --i-demultiplexed-seqs paired-end-demux.qza --p-trunc-len-f 123 --p-trunc-len-r 162 --o-table table.qza --o-representative-sequences rep-seqs.qza --o-denoising-stats denoising-stats.qza
+
+##important: always truncate at 3' end so that when OTU tables from different runs with different truncation parameters ##are merged later there is no issue. See this blog for detailed demo. https://forum.qiime2.org/t/denoising-on-multiple-##runs-to-be-combined-down-stream/14548 
+
+##If the code fails better to run a batch script that included more time on the Job. See qiime2-dada2denoise.sb
+
+##this worked and exported the required files
+
+##visualize the output using the codes below
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization denoising-stats.qzv
+
+qiime feature-table summarize \
+  --i-table table.qza \
+  --o-visualization table.qzv \
+  --m-sample-metadata-file sample-metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs.qza \
+  --o-visualization rep-seqs.qzv
+
+##exported the required file formats in tsv or pdf and checked them using qiime2View
+
+##assign taxonomy, I made a classify-silva-taxonomy.sb file with the code below and submitted the job using sbatch command
+
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-138-99-515-806-nb-classifier.qza \
+  --i-reads rep-seqs.qza \
+  --o-classification taxonomy.qza
+
+
+##the job worked and the file taxonomy.qza was exported
+
+##next output taxonomy.qza as qzv file to view
+
+qiime metadata tabulate \
+  --m-input-file taxonomy.qza \
+  --o-visualization taxonomy.qzv
+
+
+#Export OTU table
+qiime tools export \
+  --input-path table.qza \
+  --output-path phyloseq
+
+##Exported table.qza as BIOMV210DirFmt to directory phyloseq (no need to create a phyloseq directory for this step. The ##directory will be created when running the command).
+
+# OTU tables exports as feature-table.biom so convert to .tsv
+# - Change -i and -o paths accordingly
+biom convert \
+  -i phyloseq/feature-table.biom \
+  -o phyloseq/otu_table.txt \
+  --to-tsv
+
+
+# Manually change #OTUID to OTUID in otu_table.txt
+
+# Export taxonomy table
+qiime tools export \
+  --input-path taxonomy.qza \
+  --output-path phyloseq
+
+#Exported taxonomy.qza as TSVTaxonomyDirectoryFormat to directory phyloseq
+
+
+#manually change Feature ID to OTUID in taxonomy.tsv. change taxonomy and OTU tables to csv format.
+
+##these files are now ready to export to R and run using phyloseq
+
+
+##merge multiple tables and use clustering approach
+
+qiime feature-table merge \
+ --i-tables dna-table.qza \
+ --i-tables cdna-table.qza \
+ --o-merged-table merged-table.qza \ 
+ --p-overlap-method sum
+#the overlap sum method combined reads from duplicate samples in both tables, best to have all unique samples
+
+qiime feature-table merge-seqs \
+ --i-data dna-rep-seqs.qza \
+ --i-data cdna-rep-seqs.qza \
+ --o-merged-data merged-rep-seqs.qza
+
+
+De novo clustering:
+De novo clustering of a feature table can be performed as follows. In this example, clustering is performed at 99% identity to create 99% OTUs.
+
+qiime vsearch cluster-features-de-novo \
+  --i-table merged-table.qza \
+  --i-sequences merged-rep-seqs.qza \
+  --p-perc-identity 0.99 \
+  --o-clustered-table table-dn-99.qza \
+  --o-clustered-sequences rep-seqs-dn-99.qza
+
+
+Output artifacts:
+
+table-dn-99.qza
+rep-seqs-dn-99.qza
+
+
+**merged sample metadata for dna and rna dataset, exported to qzv to visualize output
+
+qiime feature-table summarize \
+  --i-table table-dn-99.qza \
+  --o-visualization table-dn-99.qzv \
+  --m-sample-metadata-file merge-sample-metadata.txt
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs-dn-99.qza \
+  --o-visualization rep-seqs-dn-99.qzv
+
+##exported the required files in tsv or pdf and checked them 
+
+##assign taxonomy
+
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-138-99-515-806-nb-classifier.qza \
+  --i-reads rep-seqs-dn-99.qza \
+  --o-classification taxonomy-dn-99.qza
+
+##for the above code, I made a classify-silva-taxonomy.sb file and submitted the job
+##the job worked and the file taxonomy-dn-99.qza was exported
+
+##next output taxonomy as qzv file
+
+qiime metadata tabulate \
+  --m-input-file taxonomy-dn-99.qza \
+  --o-visualization taxonomy-dn-99.qzv
+
+
+#Export OTU table
+qiime tools export \
+  --input-path table-dn-99.qza \
+  --output-path phyloseq
+
+##Exported table-dn-99.qza as BIOMV210DirFmt to directory phyloseq (no need to create a phyloseq directory for this step. The directory will be created when running the command.
+
+# OTU tables exports as feature-table.biom so convert to .tsv
+# - Change -i and -o paths accordingly
+biom convert \
+  -i phyloseq/feature-table.biom \
+  -o phyloseq/otu_table_dn_99.txt \
+  --to-tsv
+
+
+# Manually change #OTUID to OTUID in otu_table_dn_99.txt
+
+# Export taxonomy table
+qiime tools export \
+  --input-path taxonomy-dn-99.qza \
+  --output-path phyloseq
+
+#Exported taxonomy-dn-99.qza as TSVTaxonomyDirectoryFormat to directory phyloseq
+
+##rename taxonomy.tsv to taxonomy-dn-99.tsv
+#manually change Feature ID to OTUID in taxonomy-dn-99.tsv
+
+##these files are now ready to export to R and run using phyloseq
+
+
+##############
+##in R do clean up: remove mitochondria, chloroplast and contaminants using decontam package
+
+##First change tsv to csv format for taxonomy and OTU tables, make metadata file with negative control samples and true ##samples
+
+##decontam
+library(phyloseq)
+library(ggplot2)
+library(tidyverse)
+library(decontam)
+library(scales)
+library(vegan)
+
+
+otu = read.csv("otu_table.csv", sep=",", row.names=1)
+tax = read.csv("taxonomy.csv", sep=",", row.names=1)
+tax = as.matrix(tax)
+metadata = read.csv("sample-metadata-decontam.csv", sep=",", row.names=1) ##contains true samples & negative controls only
+OTU = otu_table(otu, taxa_are_rows = TRUE)
+TAX = tax_table(tax)
+meta = sample_data(metadata)
+
+##merge
+phyloseq_merged = phyloseq(OTU, TAX, meta)
+phyloseq_merged
+
+
+
+##check column names of taxonomy table
+colnames(tax_table(phyloseq_merged))
+
+##remove mito, chloroplast and archaea, eukarya
+phyloseq_merged_clean <- phyloseq_merged %>%
+  subset_taxa(
+    Domain == "d__Bacteria" &
+      Family   != " f__Chloroplast" &
+      #Order   != "o_Mitochondria" &
+      #Class  != "c__Chloroplast"
+      # OTU     != "0a3cf58d4ca062c13d42c9db4ebcbc53" &
+      # OTU     != "22f1fa0bdcc19746dee080bcc12a1840"
+      Family  != " f__Mitochondria"
+  )
+phyloseq_merged_clean
+
+
+
+
+##inspect library sizes
+df <- as.data.frame(sample_data(phyloseq_merged_clean)) # Put sample_data into a ggplot-friendly data.frame
+df$LibrarySize <- sample_sums(phyloseq_merged_clean)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Sample_or_Control)) + geom_point()
+
+##identify contaminants by prevalence. in this method, the distribution 
+#of the frequency of each sequence feature as a function of the 
+#prevalence is used to identify contaminants. In this method, 
+#the prevalence (presence/absence across samples) of each sequence feature 
+#in true positive samples is compared to the prevalence in negative controls 
+#to identify contaminants.
+
+sample_data(phyloseq_merged_clean)$is.neg <- sample_data(phyloseq_merged_clean)$Sample_or_Control == "Control Sample"
+contamdf.prev0.5 <- isContaminant(phyloseq_merged_clean, method="prevalence", neg="is.neg", threshold=0.5)
+table(contamdf.prev0.5$contaminant)
+
+ 
+
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(phyloseq_merged_clean, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "Control Sample", ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "True Sample", ps.pa)
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.5$contaminant)
+ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() +
+  xlab("Prevalence (Negative Controls)") + ylab("Prevalence (True Samples)")
+write.csv(df.pa, "contaminant-table.csv")
+
+write.csv(contamdf.prev0.5, "contaminant-prev-0.5.csv")
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("contaminant-table.csv")
+View(df.pa)
+subset.df <- subset(df.pa, contaminant== "FALSE")
+View(subset.df)
+keep.taxa <- as.vector(subset.df$X)
+keep.taxa
+
+phyloseq_merged_clean_decontam <- prune_taxa(keep.taxa, phyloseq_merged_clean)
+phyloseq_merged_clean_decontam
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+metadata<- read.csv("sample-metadata-decontam.csv")
+subset.metadata<- subset(metadata, Sample_or_Control=="True Sample")
+keep.samples <- as.vector(subset.metadata$sample_id)
+keep.samples
+
+phyloseq_merged_clean_decontam_final <- prune_samples(keep.samples, phyloseq_merged_clean_decontam)
+phyloseq_merged_clean_decontam_final
+
+phyloseq_merged_clean_decontam_final
+
+##rarefaction curve
+rarecurve(t(otu_table(phyloseq_merged_clean_decontam_final)), step=50)
+
+
+##rarefy to 20,000 reads, removes a few samples based on where I set the sample.size to be
+
+phyloseq_rarefy<- rarefy_even_depth(phyloseq_merged_clean_decontam_final, sample.size = 20000, rngseed = TRUE, trimOTUs=FALSE)
+
+##check histogram
+sample_sum_df <- data.frame(sum = sample_sums(phyloseq_rarefy))
+ggplot(sample_sum_df, aes(x = sum)) + 
+  geom_histogram(color = "black", fill = "indianred", binwidth = 2500) +
+  ggtitle("Distribution of sample sequencing depth") + 
+  xlab("Read counts") +
+  theme(axis.title.y = element_blank())
+View(sample_sum_df)
+
+# melt to long format (for ggploting) 
+# prune out phyla/class below 1% in each sample
+
+phyloseq_class <- phyloseq_rarefy %>%
+  tax_glom(taxrank = "Class") %>%                     # agglomerate at family/phylum/class level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  #filter(Abundance > 0.01) %>%                         # Filter out low abundance taxa
+  arrange(Class) # Sort data frame alphabetically by phylum/family etc
+
+phyloseq_class$Class[phyloseq_class$Abundance < 0.01] <- "< 1% abund."
+
+
+# Set colors for plotting
+family_colors <- c(
+  "#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD",
+  "#AD6F3B", "#673770","#D14285", "#652926", "#C84248", 
+  "#8569D5", "#5E738F","#D1A33D", "#8A7C64", "#599861", "black", "blue", "red", "violet", "yellow", 
+  "purple", "pink", "magenta", "darkblue", "darkorchid", "green","darkgreen", "brown","khaki", "grey",
+  "cornsilk4","white","cornflowerblue"
+)
+
+#OR 
+install.packages("Polychrome")
+library(Polychrome)
+P52<- createPalette(52,  c("#010101", "#ff0000"))
+swatch(P52)
+
+# Plot 
+plot<- ggplot(phyloseq_class, aes(x= treatment, y = Abundance, fill =Class)) + 
+  facet_wrap(drought~planted, scales="free") + theme(strip.text.x = element_text(size = 20))+ 
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values=as.vector(P52))+
+  #scale_x_discrete(
+  #breaks = c("7/8", "8/4", "9/2", "10/6"),
+  #labels = c("Jul", "Aug", "Sep", "Oct"), 
+  #drop = FALSE
+  #) +
+  # Remove x axis title
+  theme(axis.title.x = element_blank()) + theme(axis.text.x = element_text(size=10, angle = 90, vjust = 0.5, hjust=1))+
+  #
+  guides(fill = guide_legend(reverse = TRUE, keywidth = 1, keyheight = 1, ncol=1)) +
+  ylab("Relative Abundance (class > 1%) \n") + theme(axis.text.y=element_text(size=17),
+                                                       axis.title.y=element_text(size=20)) + 
+theme(legend.title = element_text(size=20))+ theme(legend.text = element_text(size=17))+
+  ggtitle("Class Composition")
+plot 
+ggsave(filename = "DNA-barplot_class_decontam_bean.tiff", plot = plot,
+       width = 50,
+       height = 30, units = c("cm"),
+       dpi = 300)
+##NMDS
+
+set.seed(1)
+# Ordinate
+phyloseq_nmds <- ordinate(
+  physeq = phyloseq_rarefy, 
+  method = "NMDS", 
+  distance = "bray"
+)
+plot1<- plot_ordination(
+  physeq = phyloseq_rarefy ,
+  ordination = phyloseq_nmds,
+  color = "drought",
+  shape = "planted"
+  
+)+scale_shape_manual(values=c(15,19,17,18,20,23,25))+scale_fill_manual(values=c("#a65628", "red", "#ffae19",
+                                                                                "#4daf4a", "#1919ff", "darkorchid3", "magenta"))+
+  theme_classic()+
+  geom_point(aes(color = drought), size = 4) #+stat_ellipse(aes(color = crop, group=crop),type="norm")
+plot1
+ggsave(filename="NMDS-decontam-bean-drought-planted.TIFF", plot=plot1, width=6.8, height=6, units="in", dpi=720)
+
+
+# Calculate bray curtis distance matrix
+set.seed(1)
+
+phyloseq_bray <- phyloseq::distance(phyloseq_rarefy, method = "bray")
+phyloseq_bray
+
+
+# Adonis test, PERMANOVA using BC distance 
+
+sample_df <- data.frame(sample_data(phyloseq_rarefy))
+View(sample_df)
+adonis(phyloseq_bray ~ crop, data = sample_df)
+
+
+#pcoa
+
+phyloseq_pcoa <- ordinate(
+  physeq = phyloseq_rarefy, 
+  method = "PCoA", 
+  distance = "bray"
+)
+
+# Plot 
+plot2<-plot_ordination(
+  physeq = phyloseq_rarefy,
+  ordination = phyloseq_pcoa,
+  color = "drought",
+  shape = "planted",
+  title = "PCoA"
+) + 
+  scale_color_manual(values = c("#a65628", "red", "#ffae19",
+                                "#4daf4a", "#1919ff", "darkorchid3", "magenta", "black")
+  ) +
+  geom_point(aes(color = drought), alpha = 0.7, size = 4) +
+  geom_point(colour = "grey90", size = 1.5) 
+plot2
+ggsave(filename="DNA-pcoa-bean-decontam.TIFF", plot=plot2, width=6.8, height=6, units="in", dpi=720)
+
+
+
+
